@@ -53,11 +53,7 @@ class _ExampleAppState extends State<ExampleApp> {
   ];
 
   // This function is to be called when the geofence status is changed.
-  Future<void> _onGeofenceStatusChanged(
-      Geofence geofence,
-      GeofenceRadius geofenceRadius,
-      GeofenceStatus geofenceStatus,
-      Location location) async {
+  Future<void> _onGeofenceStatusChanged(Geofence geofence, GeofenceRadius geofenceRadius, GeofenceStatus geofenceStatus, Location location) async {
     print('geofence: ${geofence.toJson()}');
     print('geofenceRadius: ${geofenceRadius.toJson()}');
     print('geofenceStatus: ${geofenceStatus.toString()}');
@@ -109,12 +105,32 @@ class _ExampleAppState extends State<ExampleApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Geofence Service'),
-          centerTitle: true,
+      // A widget used when you want to start a foreground task when trying to minimize or close the app.
+      // Declare on top of the [Scaffold] widget.
+      home: WillStartForegroundTask(
+        onWillStart: () async {
+          // You can add a foreground task start condition.
+          return _geofenceService.isRunningService;
+        },
+        androidNotificationOptions: AndroidNotificationOptions(
+          channelId: 'geofence_service_notification_channel',
+          channelName: 'Geofence Service Notification',
+          channelDescription: 'This notification appears when the geofence service is running in the background.',
+          channelImportance: NotificationChannelImportance.LOW,
+          priority: NotificationPriority.LOW,
+          isSticky: false,
         ),
-        body: _buildContentView(),
+        iosNotificationOptions: const IOSNotificationOptions(),
+        foregroundTaskOptions: const ForegroundTaskOptions(),
+        notificationTitle: 'Geofence Service is running',
+        notificationText: 'Tap to return to the app',
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('Geofence Service'),
+            centerTitle: true,
+          ),
+          body: _buildContentView(),
+        ),
       ),
     );
   }
@@ -137,7 +153,7 @@ class _ExampleAppState extends State<ExampleApp> {
       ],
     );
   }
-  
+
   Widget _buildActivityMonitor() {
     return StreamBuilder<Activity>(
       stream: _activityStreamController.stream,
@@ -156,7 +172,7 @@ class _ExampleAppState extends State<ExampleApp> {
       },
     );
   }
-  
+
   Widget _buildGeofenceMonitor() {
     return StreamBuilder<Geofence>(
       stream: _geofenceStreamController.stream,

@@ -3,7 +3,7 @@ description: Demonstrates how to use the geofence_service plugin.
 
 # The following line prevents the package from being accidentally published to
 # pub.dev using `pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: "none" # Remove this line if you wish to publish to pub.dev
 
 environment:
   sdk: ">=2.18.0 <4.0.0"
@@ -12,6 +12,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_foreground_task: ^6.1.2
 
   geofence_service:
     # When depending on this package from a real application you should use:
@@ -29,7 +30,6 @@ dev_dependencies:
 
 # The following section is specific to Flutter.
 flutter:
-
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
