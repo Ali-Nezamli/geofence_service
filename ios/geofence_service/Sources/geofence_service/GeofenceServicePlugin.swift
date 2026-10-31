@@ -1,9 +1,9 @@
 import Flutter
 import UIKit
 
-public class SwiftGeofenceServicePlugin: NSObject, FlutterPlugin {
+public class GeofenceServicePlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
-    let instance = SwiftGeofenceServicePlugin()
+    let instance = GeofenceServicePlugin()
     instance.initServices()
     instance.initChannels(registrar.messenger())
   }

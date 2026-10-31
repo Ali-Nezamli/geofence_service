@@ -12,7 +12,7 @@ class ExampleApp extends StatefulWidget {
   State<StatefulWidget> createState() => _ExampleAppState();
 }
 
-class _ExampleAppState extends State<ExampleApp> {
+class _ExampleAppState extends State<ExampleApp> with WidgetsBindingObserver {
   final _activityStreamController = StreamController<Activity>();
   final _geofenceStreamController = StreamController<Geofence>();
 
@@ -53,7 +53,11 @@ class _ExampleAppState extends State<ExampleApp> {
   ];
 
   // This function is to be called when the geofence status is changed.
-  Future<void> _onGeofenceStatusChanged(Geofence geofence, GeofenceRadius geofenceRadius, GeofenceStatus geofenceStatus, Location location) async {
+  Future<void> _onGeofenceStatusChanged(
+      Geofence geofence,
+      GeofenceRadius geofenceRadius,
+      GeofenceStatus geofenceStatus,
+      Position location) async {
     print('geofence: ${geofence.toJson()}');
     print('geofenceRadius: ${geofenceRadius.toJson()}');
     print('geofenceStatus: ${geofenceStatus.toString()}');
@@ -68,7 +72,7 @@ class _ExampleAppState extends State<ExampleApp> {
   }
 
   // This function is to be called when the location has changed.
-  void _onLocationChanged(Location location) {
+  void _onLocationChanged(Position location) {
     print('location: ${location.toJson()}');
   }
 
@@ -89,13 +93,44 @@ class _ExampleAppState extends State<ExampleApp> {
     print('ErrorCode: $errorCode');
   }
 
+  // Starts a foreground task when the app is minimized or closed while the
+  // geofence service is running, and stops it when the app comes back.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
+    if (state == AppLifecycleState.inactive && _geofenceService.isRunningService) {
+      if (!await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.startService(
+          notificationTitle: 'Geofence Service is running',
+          notificationText: 'Tap to return to the app',
+        );
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      await FlutterForegroundTask.stopService();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'geofence_service_notification_channel',
+        channelName: 'Geofence Service Notification',
+        channelDescription:
+            'This notification appears when the geofence service is running in the background.',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(),
+      foregroundTaskOptions: ForegroundTaskOptions(eventAction: ForegroundTaskEventAction.nothing()),
+    );
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _geofenceService.addGeofenceStatusChangeListener(_onGeofenceStatusChanged);
+      _geofenceService
+          .addGeofenceStatusChangeListener(_onGeofenceStatusChanged);
       _geofenceService.addLocationChangeListener(_onLocationChanged);
-      _geofenceService.addLocationServicesStatusChangeListener(_onLocationServicesStatusChanged);
+      _geofenceService.addLocationServicesStatusChangeListener(
+          _onLocationServicesStatusChanged);
       _geofenceService.addActivityChangeListener(_onActivityChanged);
       _geofenceService.addStreamErrorListener(_onError);
       _geofenceService.start(_geofenceList).catchError(_onError);
@@ -105,38 +140,19 @@ class _ExampleAppState extends State<ExampleApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      // A widget used when you want to start a foreground task when trying to minimize or close the app.
-      // Declare on top of the [Scaffold] widget.
-      home: WillStartForegroundTask(
-        onWillStart: () async {
-          // You can add a foreground task start condition.
-          return _geofenceService.isRunningService;
-        },
-        androidNotificationOptions: AndroidNotificationOptions(
-          channelId: 'geofence_service_notification_channel',
-          channelName: 'Geofence Service Notification',
-          channelDescription: 'This notification appears when the geofence service is running in the background.',
-          channelImportance: NotificationChannelImportance.LOW,
-          priority: NotificationPriority.LOW,
-          isSticky: false,
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('Geofence Service'),
+          centerTitle: true,
         ),
-        iosNotificationOptions: const IOSNotificationOptions(),
-        foregroundTaskOptions: const ForegroundTaskOptions(),
-        notificationTitle: 'Geofence Service is running',
-        notificationText: 'Tap to return to the app',
-        child: Scaffold(
-          appBar: AppBar(
-            title: const Text('Geofence Service'),
-            centerTitle: true,
-          ),
-          body: _buildContentView(),
-        ),
+        body: _buildContentView(),
       ),
     );
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _activityStreamController.close();
     _geofenceStreamController.close();
     super.dispose();

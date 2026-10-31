@@ -1,31 +1,33 @@
 import 'dart:async';
 import 'dart:developer' as dev;
 
-import 'package:fl_location/fl_location.dart';
+import 'package:activity_recognition_flutter/activity_recognition_flutter.dart' show ActivityRecognition;
 import 'package:flutter/foundation.dart';
-import 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 import 'package:geofence_service/errors/error_codes.dart';
+import 'package:geofence_service/models/activity.dart';
 import 'package:geofence_service/models/geofence.dart';
 import 'package:geofence_service/models/geofence_radius.dart';
 import 'package:geofence_service/models/geofence_radius_sort_type.dart';
 import 'package:geofence_service/models/geofence_service_options.dart';
 import 'package:geofence_service/models/geofence_status.dart';
+import 'package:geolocator/geolocator.dart' hide ActivityType;
+import 'package:permission_handler/permission_handler.dart' show Permission, PermissionActions, PermissionStatusGetters;
 
-export 'package:fl_location/fl_location.dart';
-export 'package:flutter_activity_recognition/flutter_activity_recognition.dart';
 export 'package:flutter_foreground_task/flutter_foreground_task.dart';
 export 'package:geofence_service/errors/error_codes.dart';
+export 'package:geofence_service/models/activity.dart';
 export 'package:geofence_service/models/geofence.dart';
 export 'package:geofence_service/models/geofence_radius.dart';
 export 'package:geofence_service/models/geofence_radius_sort_type.dart';
 export 'package:geofence_service/models/geofence_service_options.dart';
 export 'package:geofence_service/models/geofence_status.dart';
+export 'package:geolocator/geolocator.dart' hide ActivityType;
 
 /// Callback function to handle geofence status changes.
-typedef GeofenceStatusChanged = Future<void> Function(Geofence geofence, GeofenceRadius geofenceRadius, GeofenceStatus geofenceStatus, Location location);
+typedef GeofenceStatusChanged = Future<void> Function(Geofence geofence, GeofenceRadius geofenceRadius, GeofenceStatus geofenceStatus, Position location);
 
 /// Callback function to handle location changes.
-typedef LocationChanged = void Function(Location location);
+typedef LocationChanged = void Function(Position location);
 
 /// Callback function to handle activity changes.
 typedef ActivityChanged = void Function(Activity prevActivity, Activity currActivity);
@@ -45,7 +47,7 @@ class GeofenceService {
 
   final GeofenceServiceOptions _options = GeofenceServiceOptions();
 
-  StreamSubscription<Location>? _locationSubscription;
+  StreamSubscription<Position>? _locationSubscription;
   StreamSubscription<bool>? _locationServicesStatusSubscription;
   StreamSubscription<Activity>? _activitySubscription;
   Activity _activity = Activity.unknown;
@@ -148,14 +150,14 @@ class GeofenceService {
     _printDevLog('The ActivityChange listener has been removed. (size: ${_activityChangeListeners.length})');
   }
 
-  /// Register a closure to be called when the [Location] changes.
+  /// Register a closure to be called when the [Position] changes.
   void addLocationChangeListener(LocationChanged listener) {
     _locationChangeListeners.add(listener);
     _printDevLog('Added LocationChange listener. (size: ${_locationChangeListeners.length})');
   }
 
   /// Remove a previously registered closure from the list of closures that
-  /// are notified when the [Location] changes.
+  /// are notified when the [Position] changes.
   void removeLocationChangeListener(LocationChanged listener) {
     _locationChangeListeners.remove(listener);
     _printDevLog('The LocationChange listener has been removed. (size: ${_locationChangeListeners.length})');
@@ -236,16 +238,16 @@ class GeofenceService {
 
   Future<void> _checkPermissions() async {
     // Check whether location services are enabled.
-    if (!await FlLocation.isLocationServicesEnabled) {
+    if (!await Geolocator.isLocationServiceEnabled()) {
       return Future.error(ErrorCodes.LOCATION_SERVICES_DISABLED);
     }
 
     // Check whether to allow location permission.
-    var locationPermission = await FlLocation.checkLocationPermission();
+    var locationPermission = await Geolocator.checkPermission();
     if (locationPermission == LocationPermission.deniedForever) {
       return Future.error(ErrorCodes.LOCATION_PERMISSION_PERMANENTLY_DENIED);
     } else if (locationPermission == LocationPermission.denied) {
-      locationPermission = await FlLocation.requestLocationPermission();
+      locationPermission = await Geolocator.requestPermission();
       if (locationPermission == LocationPermission.denied || locationPermission == LocationPermission.deniedForever) {
         return Future.error(ErrorCodes.LOCATION_PERMISSION_DENIED);
       }
@@ -255,30 +257,47 @@ class GeofenceService {
     if (_options.useActivityRecognition == false) return;
 
     // Check whether to allow activity recognition permission.
-    var activityPermission = await FlutterActivityRecognition.instance.checkPermission();
-    if (activityPermission == PermissionRequestResult.PERMANENTLY_DENIED) {
+    // iOS asks for motion access itself when the activity stream starts;
+    // requesting it through permission_handler there crashes the app.
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+
+    final activityPermission = await Permission.activityRecognition.request();
+    if (activityPermission.isPermanentlyDenied) {
       return Future.error(ErrorCodes.ACTIVITY_RECOGNITION_PERMISSION_PERMANENTLY_DENIED);
-    } else if (activityPermission == PermissionRequestResult.DENIED) {
-      activityPermission = await FlutterActivityRecognition.instance.requestPermission();
-      if (activityPermission != PermissionRequestResult.GRANTED) {
-        return Future.error(ErrorCodes.ACTIVITY_RECOGNITION_PERMISSION_DENIED);
-      }
+    } else if (!activityPermission.isGranted) {
+      return Future.error(ErrorCodes.ACTIVITY_RECOGNITION_PERMISSION_DENIED);
     }
   }
 
   Future<void> _listenStream() async {
-    _locationSubscription = FlLocation.getLocationStream(
-      accuracy: LocationAccuracy.navigation,
-      interval: _options.interval,
-    ).handleError(_handleStreamError).listen(_onLocationReceive);
+    final LocationSettings locationSettings;
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      locationSettings = AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        intervalDuration: Duration(milliseconds: _options.interval),
+      );
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      locationSettings = AppleSettings(accuracy: LocationAccuracy.bestForNavigation);
+    } else {
+      locationSettings = const LocationSettings(accuracy: LocationAccuracy.bestForNavigation);
+    }
+
+    _locationSubscription =
+        Geolocator.getPositionStream(locationSettings: locationSettings).handleError(_handleStreamError).listen(_onLocationReceive);
 
     _locationServicesStatusSubscription =
-        FlLocation.getLocationServicesStatusStream().map((event) => event == LocationServicesStatus.enabled).listen(_onLocationServicesStatusChange);
+        Geolocator.getServiceStatusStream().map((event) => event == ServiceStatus.enabled).listen(_onLocationServicesStatusChange);
 
     // Activity Recognition API 사용 안함
     if (_options.useActivityRecognition == false) return;
 
-    _activitySubscription = FlutterActivityRecognition.instance.activityStream.handleError(_handleStreamError).listen(_onActivityReceive);
+    // The app runs its own foreground service (flutter_foreground_task), so the
+    // plugin's Android foreground service is not needed.
+    _activitySubscription = ActivityRecognition()
+        .activityStream(runForegroundService: false)
+        .map(Activity.fromEvent)
+        .handleError(_handleStreamError)
+        .listen(_onActivityReceive);
   }
 
   Future<void> _cancelStream() async {
@@ -292,8 +311,8 @@ class GeofenceService {
     _activitySubscription = null;
   }
 
-  void _onLocationReceive(Location location) async {
-    if (location.isMock && !_options.allowMockLocations) return;
+  void _onLocationReceive(Position location) async {
+    if (location.isMocked && !_options.allowMockLocations) return;
     if (location.accuracy > _options.accuracy) return;
 
     for (final listener in _locationChangeListeners) {
@@ -318,7 +337,7 @@ class GeofenceService {
       geofence = _geofenceList[i];
 
       // 지오펜스 남은 거리 계산 및 업데이트
-      geoRemainingDistance = LocationUtils.distanceBetween(location.latitude, location.longitude, geofence.latitude, geofence.longitude);
+      geoRemainingDistance = Geolocator.distanceBetween(location.latitude, location.longitude, geofence.latitude, geofence.longitude);
       geofence.updateRemainingDistance(geoRemainingDistance);
 
       // 지오펜스 반경 미터 단위 정렬
